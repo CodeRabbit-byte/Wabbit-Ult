@@ -105,7 +105,7 @@ public class WabbitUltimateClient implements ClientModInitializer {
             CapeLoader.reload();
             LivingEntityFeatureRendererRegistrationCallback.EVENT.register((entityType, entityRenderer, helper, context) -> {
                 if (entityRenderer instanceof PlayerEntityRenderer playerRenderer) {
-                    helper.register(new CosmeticFeature(playerRenderer));
+                    helper.register(new CosmeticFeature(playerRenderer, context.getEntityModels()));
                 }
             });
         } catch (Exception e) {

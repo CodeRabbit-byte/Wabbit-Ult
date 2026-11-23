@@ -3,10 +3,11 @@
   "id": "wabbitultimate",
   "version": "${version}",
   "name": "Wabbit Ultimate",
-  "description": "All-in-one Fabric mod: GUI, HUDs and utilities. Stage 1: foundation.",
+  "description": "All-in-one Fabric client mod: menu, HUDs, cosmetics, Spotify lyrics, mod manager and utilities.",
   "authors": ["Wabbit"],
   "license": "MIT",
   "environment": "client",
+  "mixins": ["wabbitultimate.mixins.json"],
   "entrypoints": {
     "client": ["com.wabbit.ultimate.WabbitUltimateClient"]
   },

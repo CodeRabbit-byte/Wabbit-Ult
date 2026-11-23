@@ -116,8 +116,12 @@ public final class SpotifyService {
                 accessToken = t.access();
                 accessExpiresAt = System.currentTimeMillis() + t.expiresInSec() * 1000L;
                 if (t.refresh() != null && !t.refresh().equals(cfg.spotifyRefreshToken)) {
-                    cfg.spotifyRefreshToken = t.refresh();
-                    ConfigManager.save();
+                    String newRefresh = t.refresh();
+                    // config is read and written by the game thread; hand the change over instead of saving here
+                    net.minecraft.client.MinecraftClient.getInstance().execute(() -> {
+                        cfg.spotifyRefreshToken = newRefresh;
+                        ConfigManager.save();
+                    });
                 }
             } catch (Exception e) {
                 accessToken = null;

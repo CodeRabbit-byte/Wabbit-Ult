@@ -9,9 +9,15 @@ import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.RenderLayers;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
+import net.minecraft.client.render.entity.model.PlayerCapeModel;
+import net.minecraft.client.render.entity.model.PlayerEntityModel;
 import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.entity.EntityPose;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.EquippableComponent;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.PlayerLikeEntity;
+import net.minecraft.item.ItemStack;
 import net.minecraft.util.Identifier;
 import org.joml.Quaternionf;
 import org.slf4j.Logger;
@@ -20,8 +26,10 @@ import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
- * Draws the equipped cosmetics and the cape on the local player. Everything is built from coloured blocks
- * that are drawn with a plain white texture, so no model or texture registration is needed.
+ * Draws the equipped cosmetics and the cape on the local player. Items are built from coloured blocks drawn with
+ * a plain white texture; they are attached to the real head and body model parts, so they follow every pose and
+ * animation (sneaking, swimming, crawling, flying, riding, sleeping). The cape is drawn on the vanilla cape model
+ * with the picture as its texture, so it swings exactly like a Minecraft cape.
  */
 public final class CosmeticRenderer {
     private static final Logger LOG = LoggerFactory.getLogger("WabbitUltimate");
@@ -31,6 +39,8 @@ public final class CosmeticRenderer {
     private static final float S = 1f / 16f;
     private static final float RAD = (float) (Math.PI / 180.0);
     private static final int FULL_BRIGHT = 0xF000F0;
+    /** Head items scale about the centre of the head so they sit on top of the hat layer or a helmet. */
+    private static final float HAT_LAYER_SCALE = 9f / 8f, HELMET_SCALE = 10f / 8f;
     private static boolean reported;
 
     public static void reportOnce(Exception e) {
@@ -40,53 +50,90 @@ public final class CosmeticRenderer {
         }
     }
 
-    public static void render(MatrixStack matrices, OrderedRenderCommandQueue queue,
-                              PlayerEntityRenderState state, int light) {
-        WabbitConfig cfg = ConfigManager.get();
-        if (!cfg.cosmeticsOn) return;
+    /** True when the custom cape replaces the player's own (Mojang / launcher) cape. Used by the renderer mixin. */
+    public static boolean replacesVanillaCape(PlayerLikeEntity entity) {
         MinecraftClient mc = MinecraftClient.getInstance();
-        ClientPlayerEntity me = mc.player;
-        if (me == null || state.invisible) return;
+        if (mc.player == null || entity != mc.player) return false;
+        WabbitConfig cfg = ConfigManager.get();
+        return cfg.cosmeticsOn && cfg.capeOn && CapeLoader.current() != null && !backBusy(Catalog.equipped(cfg));
+    }
 
-        // Only decorate the local player: the render state has no player id, so match by position.
-        double dx = state.x - me.getX(), dy = state.y - me.getY(), dz = state.z - me.getZ();
-        if (dx * dx + dy * dy + dz * dz > 4.0) return;
-        if (!(state.isInPose(EntityPose.STANDING) || state.isInPose(EntityPose.CROUCHING))) return;
+    public static void render(MatrixStack m, OrderedRenderCommandQueue q, PlayerEntityRenderState state, int light,
+                              PlayerEntityModel model, PlayerCapeModel capeModel) {
+        WabbitConfig cfg = ConfigManager.get();
+        if (!cfg.cosmeticsOn || state.invisible) return;
+        ClientPlayerEntity me = MinecraftClient.getInstance().player;
+        if (me == null || state.id != me.getId()) return; // only ever decorate the local player
 
         List<Catalog.Placed> equipped = Catalog.equipped(cfg);
-        boolean backBusy = false;
-        for (Catalog.Placed p : equipped) if (p.item().slot() == Slot.WINGS || p.item().slot() == Slot.BACK) backBusy = true;
-        CapeData cape = (cfg.capeOn && !backBusy) ? CapeLoader.current() : null;
+        boolean elytra = has(state.equippedChestStack, DataComponentTypes.GLIDER);
+        CapeData cape = (cfg.capeOn && !elytra && !backBusy(equipped)) ? CapeLoader.current() : null;
         if (equipped.isEmpty() && cape == null) return;
 
         RenderLayer layer = RenderLayers.entityTranslucent(WHITE);
         float age = state.age;
-        boolean sneak = state.sneaking;
+        boolean chestArmor = hasChestArmor(state.equippedChestStack);
 
-        boolean anyHead = false, anyBody = cape != null;
+        boolean anyHead = false, anyBody = false;
         for (Catalog.Placed p : equipped) {
             if (p.item().slot().head) anyHead = true;
-            else anyBody = true;
+            else if (shown(p, elytra)) anyBody = true;
         }
 
         if (anyHead) {
-            matrices.push();
-            matrices.translate(0f, sneak ? 4.2f * S : 0f, 0f);
-            matrices.multiply(new Quaternionf().rotationZYX(0f, state.relativeHeadYaw * RAD, state.pitch * RAD));
-            for (Catalog.Placed p : equipped) if (p.item().slot().head) drawItem(matrices, queue, layer, p, age, light);
-            matrices.pop();
+            m.push();
+            model.getRootPart().applyTransform(m);
+            model.head.applyTransform(m);
+            ItemStack helmet = state.equippedHeadStack;
+            float k = helmet != null && !helmet.isEmpty() ? HELMET_SCALE : (state.hatVisible ? HAT_LAYER_SCALE : 1f);
+            if (k != 1f) {
+                m.translate(0f, -4f * S, 0f);
+                m.scale(k, k, k);
+                m.translate(0f, 4f * S, 0f);
+            }
+            for (Catalog.Placed p : equipped) if (p.item().slot().head) drawItem(m, q, layer, p, age, light);
+            m.pop();
         }
 
         if (anyBody) {
-            matrices.push();
-            if (sneak) {
-                matrices.translate(0f, 3.2f * S, 0f);
-                matrices.multiply(new Quaternionf().rotationX(0.5f));
+            m.push();
+            model.getRootPart().applyTransform(m);
+            model.body.applyTransform(m);
+            if (chestArmor) m.translate(0f, 0f, 1f * S); // sit on the chestplate, not inside it
+            for (Catalog.Placed p : equipped) {
+                if (!p.item().slot().head && shown(p, elytra)) drawItem(m, q, layer, p, age, light);
             }
-            for (Catalog.Placed p : equipped) if (!p.item().slot().head) drawItem(matrices, queue, layer, p, age, light);
-            if (cape != null) drawCape(matrices, queue, layer, cape, cfg.capeFlip, state, sneak, light);
-            matrices.pop();
+            m.pop();
         }
+
+        if (cape != null) {
+            Identifier tex = CapeTexture.get(cape, cfg.capeFlip);
+            m.push();
+            if (chestArmor) m.translate(0f, -0.053125f, 0.06875f); // same offset the vanilla cape uses
+            q.submitModel(capeModel, state, m, RenderLayers.entityTranslucent(tex), light,
+                    OverlayTexture.DEFAULT_UV, state.outlineColor, null);
+            m.pop();
+        }
+    }
+
+    /** Wings are hidden while an elytra is worn; it sits in the same place. */
+    private static boolean shown(Catalog.Placed p, boolean elytra) {
+        return !(elytra && p.item().slot() == Slot.WINGS);
+    }
+
+    private static boolean backBusy(List<Catalog.Placed> equipped) {
+        for (Catalog.Placed p : equipped) if (p.item().slot() == Slot.WINGS || p.item().slot() == Slot.BACK) return true;
+        return false;
+    }
+
+    private static boolean has(ItemStack stack, net.minecraft.component.ComponentType<?> type) {
+        return stack != null && !stack.isEmpty() && stack.contains(type);
+    }
+
+    private static boolean hasChestArmor(ItemStack stack) {
+        if (stack == null || stack.isEmpty() || stack.contains(DataComponentTypes.GLIDER)) return false;
+        EquippableComponent e = stack.get(DataComponentTypes.EQUIPPABLE);
+        return e != null && e.slot() == EquipmentSlot.CHEST && e.assetId().isPresent();
     }
 
     private static void drawItem(MatrixStack m, OrderedRenderCommandQueue q, RenderLayer layer,
@@ -153,37 +200,5 @@ public final class CosmeticRenderer {
                 .overlay(OverlayTexture.DEFAULT_UV)
                 .light(light)
                 .normal(e, nx, ny, nz);
-    }
-
-    private static void drawCape(MatrixStack m, OrderedRenderCommandQueue q, RenderLayer layer, CapeData cape,
-                                 boolean flip, PlayerEntityRenderState state, boolean sneak, int light) {
-        float amp = Math.min(1f, state.limbSwingAmplitude);
-        float prog = state.limbSwingAnimationProgress;
-        float angle = 5f + amp * 28f + (float) Math.sin(prog * 0.6662f) * amp * 8f + (sneak ? 18f : 0f);
-
-        m.push();
-        m.translate(0f, 0f, 2.2f * S);
-        m.multiply(new Quaternionf().rotationX(angle * RAD));
-        q.submitCustom(m, layer, (e, vc) -> {
-            float cell = 0.5f * S;
-            for (int gy = 0; gy < CapeData.H; gy++) {
-                for (int gx = 0; gx < CapeData.W; gx++) {
-                    int c = cape.at(gx, gy, flip);
-                    if (((c >>> 24) & 0xFF) < 16) continue;
-                    float x2 = (5f - gx * 0.5f) * S;
-                    float x1 = x2 - cell;
-                    float y1 = gy * cell;
-                    float y2 = y1 + cell;
-                    // outer face (seen from behind), inner face a little darker
-                    quad(e, vc, c, light, 0, 0, 1, x2, y2, 0.5f * S, x1, y2, 0.5f * S, x1, y1, 0.5f * S, x2, y1, 0.5f * S);
-                    int dark = (c & 0xFF000000)
-                            | (((c >> 16 & 0xFF) * 7 / 10) << 16)
-                            | (((c >> 8 & 0xFF) * 7 / 10) << 8)
-                            | ((c & 0xFF) * 7 / 10);
-                    quad(e, vc, dark, light, 0, 0, -1, x1, y2, 0f, x2, y2, 0f, x2, y1, 0f, x1, y1, 0f);
-                }
-            }
-        });
-        m.pop();
     }
 }

@@ -214,4 +214,9 @@ public class GiveawayScreen extends Screen {
     public boolean shouldPause() {
         return false;
     }
+
+    @Override
+    public void removed() {
+        ConfigManager.save(); // keep a balance typed into a field even when the menu is closed with Esc
+    }
 }

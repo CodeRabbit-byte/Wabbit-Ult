@@ -104,6 +104,8 @@ public final class ModManager {
                 boolean dis = f.endsWith(".jar" + SUFFIX);
                 if (!dis && !f.endsWith(".jar")) return;
                 String base = dis ? f.substring(0, f.length() - SUFFIX.length()) : f;
+                // a leftover "x.jar.disabled" next to a live "x.jar" is the same mod: list it once, as enabled
+                if (dis && Files.exists(p.resolveSibling(base))) return;
                 LoadedMod lm = LOADED.get(base);
                 out.add(new Entry(base, lm != null ? lm.name() : base,
                         lm != null ? lm.version() : "", !dis, lm));
@@ -142,11 +144,15 @@ public final class ModManager {
                 String blocker = blockedBy(base);
                 if (blocker != null) return new Result(false, "Can't disable: required by " + blocker + ".");
                 if (!Files.exists(on)) return new Result(false, "Already disabled.");
+                if (Files.exists(off)) return new Result(false, "There is already a " + off.getFileName()
+                        + " in the mods folder. Delete one of the two copies by hand with the game closed.");
                 Files.move(on, off);
                 pendingRestart = true;
                 return new Result(true, "Disabled " + base + ". Restart required.");
             } else {
                 if (!Files.exists(off)) return new Result(false, "Already enabled.");
+                if (Files.exists(on)) return new Result(false, "There is already a " + on.getFileName()
+                        + " in the mods folder. Delete one of the two copies by hand with the game closed.");
                 Files.move(off, on);
                 pendingRestart = true;
                 return new Result(true, "Enabled " + base + ". Restart required.");

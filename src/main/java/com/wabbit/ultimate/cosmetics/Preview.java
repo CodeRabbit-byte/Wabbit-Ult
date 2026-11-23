@@ -11,7 +11,11 @@ import java.util.List;
 public final class Preview {
     private Preview() {}
 
-    public record Rect(int x1, int y1, int x2, int y2, int color, float depth) {}
+    /** {@code outline}: draw a darker 1-pixel border (blocks); cape cells are drawn flat. */
+    public record Rect(int x1, int y1, int x2, int y2, int color, float depth, boolean outline) {}
+
+    /** Tallest and lowest model y the preview can show (wizard hat tip, feet). */
+    public static final float TOP_Y = -18f, BOTTOM_Y = 24f;
 
     private static final Box[] AVATAR = {
             new Box(-4, -8, -4, 4, 0, 4, 0xFFC89B7B, false, false, 0),      // head
@@ -23,15 +27,27 @@ public final class Preview {
     };
 
     /**
+     * @param cape     cape to hang on the back, or null
      * @param angleDeg viewing angle, 0 = looking at the player's face
      * @param cx       screen x of the player's centre line
      * @param top      screen y of the top of the head
      * @param scale    screen pixels per model pixel
      */
-    public static List<Rect> project(List<Catalog.Placed> placed, boolean avatar, float ageTicks,
-                                     float angleDeg, float cx, float top, float scale) {
+    public static List<Rect> project(List<Catalog.Placed> placed, boolean avatar, CapeData cape, boolean flip,
+                                     float ageTicks, float angleDeg, float cx, float top, float scale) {
         List<Rect> out = new ArrayList<>();
-        if (avatar) for (Box b : AVATAR) addBox(out, b, b.argb(), 0, 0, 0, 0, 0, angleDeg, cx, top, scale);
+        if (avatar) for (Box b : AVATAR) addBox(out, b, b.argb(), 0, 0, 0, 0, angleDeg, cx, top, scale, true);
+        if (cape != null) {
+            for (int gy = 0; gy < CapeData.H; gy++) {
+                for (int gx = 0; gx < CapeData.W; gx++) {
+                    int c = cape.at(gx, gy, flip);
+                    if (((c >>> 24) & 0xFF) < 16) continue;
+                    float x2 = 5f - gx * 0.5f;
+                    Box cell = new Box(x2 - 0.5f, gy * 0.5f, 2.2f, x2, gy * 0.5f + 0.5f, 2.7f, c | 0xFF000000, false, false, 0);
+                    addBox(out, cell, cell.argb(), 0, 0, 0, 0, angleDeg, cx, top, scale, false);
+                }
+            }
+        }
         for (Catalog.Placed p : placed) {
             float bob = p.item().bob() ? (float) Math.sin(ageTicks * 0.08f) * 0.6f : 0f;
             for (Box b : p.item().boxes()) {
@@ -42,7 +58,7 @@ public final class Preview {
                     px = b.group() == 1 ? Catalog.WING_PIVOT[0] : -Catalog.WING_PIVOT[0];
                     pz = Catalog.WING_PIVOT[2];
                 }
-                addBox(out, b, b.color(p.tintRgb()), bob, local, px, pz, 0, angleDeg, cx, top, scale);
+                addBox(out, b, b.color(p.tintRgb()), bob, local, px, pz, angleDeg, cx, top, scale, true);
             }
         }
         // far first, near last
@@ -51,7 +67,7 @@ public final class Preview {
     }
 
     private static void addBox(List<Rect> out, Box b, int color, float dy, float localDeg, float pivotX, float pivotZ,
-                               float unused, float angleDeg, float cx, float top, float scale) {
+                               float angleDeg, float cx, float top, float scale, boolean outline) {
         double local = Math.toRadians(localDeg);
         double g = Math.toRadians(angleDeg);
         float[] xs = {b.x1(), b.x2(), b.x1(), b.x2()};
@@ -74,6 +90,6 @@ public final class Preview {
         int sx2 = Math.max(sx1 + 1, Math.round((float) (cx + maxX * scale)));
         int sy1 = Math.round(top + (b.y1() + dy + 8) * scale);
         int sy2 = Math.max(sy1 + 1, Math.round(top + (b.y2() + dy + 8) * scale));
-        out.add(new Rect(sx1, sy1, sx2, sy2, color, (float) (depthSum / 4)));
+        out.add(new Rect(sx1, sy1, sx2, sy2, color, (float) (depthSum / 4), outline));
     }
 }

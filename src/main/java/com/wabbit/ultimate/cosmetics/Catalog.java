@@ -52,6 +52,18 @@ public final class Catalog {
         return all;
     }
 
+    /** Boxes for the +x side of a head item, then the same mirrored onto the other side (both fixed). */
+    private static List<Box> mirrorPair(List<Box> oneSide) {
+        List<Box> all = new ArrayList<>();
+        for (Box b : oneSide) {
+            all.add(b);
+            all.add(b.mirroredX(0));
+        }
+        return all;
+    }
+
+    private static final int PINK = 0xFFFFA6C9;
+
     static {
         // ---- hats (head frame: head spans y -8..0, x -4..4, z -4..4) ----
         add("top_hat", "Top Hat", Slot.HAT, 0, false, List.of(
@@ -71,6 +83,32 @@ public final class Catalog {
                 tint(-1.8f, -12.6f, -1.8f, 1.8f, -11.1f, 1.8f),
                 fix(-1.2f, -14.1f, -1.2f, 1.2f, -12.6f, 1.2f, 0xFFF4F4F4),
                 fix(-0.7f, -15.3f, -0.7f, 0.7f, -14.1f, 0.7f, 0xFFFFC830)));
+        add("wizard_hat", "Wizard Hat", Slot.HAT, 4, false, List.of(
+                tint(-6.0f, -9.0f, -6.0f, 6.0f, -8.1f, 6.0f),
+                fix(-3.9f, -9.9f, -3.9f, 3.9f, -9.0f, 3.9f, 0xFFFFC830),
+                tint(-3.8f, -11.0f, -3.8f, 3.8f, -9.9f, 3.8f),
+                tint(-2.9f, -13.0f, -2.9f, 2.9f, -11.0f, 2.9f),
+                tint(-2.0f, -15.0f, -1.5f, 2.0f, -13.0f, 2.5f),
+                tint(-1.1f, -16.6f, 0.5f, 1.1f, -15.0f, 3.5f),
+                tint(-0.5f, -17.6f, 2.2f, 0.5f, -16.6f, 4.4f),
+                glowFix(-0.7f, -12.6f, -3.05f, 0.7f, -11.2f, -2.9f, 0xFFFFE066)));
+        // the right ear flops forward; the left one stands up
+        add("bunny_ears", "Bunny Ears", Slot.HAT, 6, false, List.of(
+                tint(1.0f, -14.6f, -0.45f, 2.8f, -8.0f, 0.45f),
+                fix(1.45f, -13.9f, -0.6f, 2.35f, -8.6f, -0.45f, PINK),
+                tint(-2.8f, -12.2f, -0.45f, -1.0f, -8.0f, 0.45f),
+                tint(-2.8f, -13.0f, -3.2f, -1.0f, -12.2f, 0.45f),
+                fix(-2.35f, -11.6f, -0.6f, -1.45f, -8.6f, -0.45f, PINK)));
+        add("cat_ears", "Cat Ears", Slot.HAT, 7, false, mirrorPair(List.of(
+                tint(1.2f, -9.2f, -1.0f, 3.8f, -8.0f, 0.0f),
+                tint(1.6f, -10.2f, -1.0f, 3.4f, -9.2f, 0.0f),
+                tint(2.0f, -11.0f, -1.0f, 3.0f, -10.2f, 0.0f),
+                fix(1.8f, -9.8f, -1.15f, 3.2f, -8.2f, -1.0f, PINK))));
+        add("devil_horns", "Devil Horns", Slot.HAT, 0, false, mirrorPair(List.of(
+                tint(2.0f, -9.0f, -2.6f, 3.4f, -8.0f, -1.2f),
+                tint(2.6f, -10.2f, -2.4f, 3.8f, -9.0f, -1.4f),
+                tint(3.2f, -11.2f, -2.2f, 4.2f, -10.2f, -1.6f),
+                tint(3.6f, -11.9f, -2.1f, 4.3f, -11.2f, -1.7f))));
 
         // ---- crowns ----
         add("royal_crown", "Royal Crown", Slot.CROWN, 1, false, List.of(
@@ -157,6 +195,13 @@ public final class Catalog {
                 tintA(1.5f, -0.8f, 2.75f, 6.4f, 5.8f, 3.15f, 0xE6, false),
                 tintA(7.4f, -0.8f, 2.75f, 10.6f, 3.6f, 3.15f, 0xE6, false),
                 tintA(1.5f, 5.8f, 2.75f, 6.4f, 7.8f, 3.15f, 0xE6, false))));
+        add("butterfly_wings", "Butterfly Wings", Slot.WINGS, 2, false, wingPair(List.of(
+                fix(1.5f, -3.9f, 2.6f, 10.4f, -3.5f, 3.1f, 0xFF1A1A1E),
+                tintA(1.5f, -3.5f, 2.65f, 8.5f, 2.5f, 3.05f, 0xD0, false),
+                tintA(8.5f, -3.5f, 2.65f, 10.4f, 0.5f, 3.05f, 0xD0, false),
+                tintA(1.5f, 2.5f, 2.65f, 6.5f, 7.5f, 3.05f, 0xD0, false),
+                fix(5.5f, -2.5f, 2.6f, 7.5f, -0.5f, 3.1f, 0xFFF4F4F4),
+                fix(3.0f, 4.0f, 2.6f, 4.5f, 5.5f, 3.1f, 0xFFF4F4F4))));
 
         // ---- back items ----
         add("backpack", "Backpack", Slot.BACK, 8, false, List.of(

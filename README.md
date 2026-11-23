@@ -4,7 +4,7 @@ Client-side Fabric mod for Minecraft **1.21.11**. Installs in the normal `mods` 
 
 ## Install
 1. Install Fabric Loader (0.18+) for 1.21.11 and put **Fabric API** in `mods`.
-2. Put `wabbit-ultimate-0.10.0.jar` in `.minecraft/mods`.
+2. Put `wabbit-ultimate-0.11.0.jar` in `.minecraft/mods`.
 3. Launch the game.
 
 ## Get the jar

@@ -10,6 +10,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public final class ConfigManager {
     private static final Logger LOG = LoggerFactory.getLogger("WabbitUltimate");
@@ -41,16 +44,32 @@ public final class ConfigManager {
                 save();
             }
         } catch (Exception e) {
-            // A broken config must never crash the game: keep defaults and rewrite the file.
+            // A broken config must never crash the game: keep defaults, but set the broken file aside first so
+            // a typo in a hand edit does not wipe every setting.
             LOG.error("Could not read config, using defaults", e);
+            try {
+                Path aside = FILE.resolveSibling("wabbit-ultimate.json.broken-"
+                        + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")));
+                Files.copy(FILE, aside, StandardCopyOption.REPLACE_EXISTING);
+                LOG.error("The unreadable config was kept as {}", aside.getFileName());
+            } catch (IOException copyFailed) {
+                LOG.error("Could not keep a copy of the unreadable config", copyFailed);
+            }
             config = new WabbitConfig();
             save();
         }
     }
 
-    public static void save() {
+    /** Writes to a temporary file and swaps it in, so a crash mid-write never leaves half a config. */
+    public static synchronized void save() {
         try {
-            Files.writeString(FILE, GSON.toJson(config), StandardCharsets.UTF_8);
+            Path tmp = FILE.resolveSibling(FILE.getFileName() + ".tmp");
+            Files.writeString(tmp, GSON.toJson(config), StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, FILE, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(tmp, FILE, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             LOG.error("Could not save config", e);
         }

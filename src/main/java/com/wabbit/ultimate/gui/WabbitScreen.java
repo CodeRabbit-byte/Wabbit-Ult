@@ -194,7 +194,7 @@ public class WabbitScreen extends Screen {
         int dim = cfg.darkTheme ? 0xFFA0A6B5 : 0xFF555B6B;
 
         ctx.drawText(textRenderer, "Wabbit Ultimate", left + 10, top + 12, cfg.accent(), true);
-        ctx.drawText(textRenderer, "v0.10.0", left + 10, top + 24, dim, false);
+        ctx.drawText(textRenderer, "v0.11.0", left + 10, top + 24, dim, false);
 
         int cx = left + SIDEBAR_W + 12;
         ctx.drawText(textRenderer, page.label, cx, top + 12, text, true);

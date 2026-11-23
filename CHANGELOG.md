@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.11.0 - Better cosmetics and bug fixes (startup tested, cosmetics not yet confirmed in-game)
+- Capes now use the real Minecraft cape model and your full-resolution picture, so they swing, flap and lean exactly like a Mojang cape. HD cape files (up to 1024x512) keep their detail
+- A Wabbit cape replaces your own Mojang or launcher cape instead of drawing on top of it. Capes and wings hide while you wear an elytra, the way vanilla capes do
+- Cosmetics are attached to the real head and body, so they now show and follow you while swimming, crawling, flying, riding and sleeping (before, they disappeared in every pose except standing and sneaking)
+- Head items sit on top of the skin's hat layer and on top of helmets; back items and capes sit on top of chestplates instead of inside them
+- Fixed: other players standing within 2 blocks of you were drawn wearing your cosmetics
+- New items: Wizard Hat, Bunny Ears, Cat Ears, Devil Horns, Butterfly Wings
+- The menu preview shows your cape, fits tall hats inside the panel, and no longer overlaps text on small screens. The cape help text no longer covers the bottom buttons; tabs and buttons shrink to fit short or narrow windows
+- Fixed: a typo in `config/wabbit-ultimate.json` wiped every setting. The broken file is now kept as `wabbit-ultimate.json.broken-<time>` and settings are saved atomically
+- Fixed: restoring a backup brought back an old Spotify login and sync folder
+- Fixed: a mod present as both `x.jar` and `x.jar.disabled` showed twice and could never be toggled
+- Fixed: a balance typed in the Advent or Giveaway menu was lost when the menu was closed with Esc
+
 ## 0.10.0 - Search, performance alerts, HUD layout copy/paste (not yet confirmed in-game)
 - Dashboard search box: type "spotify", "hat", "backup"... and click a result to jump straight to it
 - Performance alerts (Features > Performance alerts): a toast when FPS stays under 30 for 5 seconds, or memory stays at 90% for 10 seconds. Only while you are in a world with no menu open, with long cool-downs so it never spams. Limits can be changed in `config/wabbit-ultimate.json` (`perfLowFps`, `perfHighMemPct`)

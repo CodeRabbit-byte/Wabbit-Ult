@@ -62,8 +62,16 @@ public final class SyncManager {
     }
 
     public static void restore(Path backupFile, Path configFile) throws IOException {
-        JsonParser.parseString(Files.readString(backupFile, StandardCharsets.UTF_8)); // refuse corrupt files
-        Files.copy(backupFile, configFile, StandardCopyOption.REPLACE_EXISTING);
+        JsonObject backup = JsonParser.parseString(Files.readString(backupFile, StandardCharsets.UTF_8)).getAsJsonObject(); // refuse corrupt files
+        // settings that belong to this machine (sync folder, Spotify login) stay as they are now
+        if (Files.exists(configFile)) {
+            JsonObject now = JsonParser.parseString(Files.readString(configFile, StandardCharsets.UTF_8)).getAsJsonObject();
+            for (String k : EXCLUDED) {
+                if (now.has(k)) backup.add(k, now.get(k));
+                else backup.remove(k);
+            }
+        }
+        Files.writeString(configFile, GSON.toJson(backup), StandardCharsets.UTF_8);
     }
 
     // ----- sync folder -----
