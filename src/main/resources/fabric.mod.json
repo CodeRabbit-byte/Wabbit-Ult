@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "wabbitultimate",
+  "version": "${version}",
+  "name": "Wabbit Ultimate",
+  "description": "All-in-one Fabric mod: GUI, HUDs and utilities. Stage 1: foundation.",
+  "authors": ["Wabbit"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.wabbit.ultimate.WabbitUltimateClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
