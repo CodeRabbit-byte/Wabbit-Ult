@@ -137,7 +137,7 @@ pub fn parse_java_major(text: &str) -> Option<u32> {
 /// Runs `java -version` and returns the major version.
 pub fn java_major(java: &str) -> Result<u32> {
     let out = Command::new(java).arg("-version").output().with_context(|| {
-        format!("could not run Java (\"{java}\"). Install Java 21 or pass --java <path to java.exe>")
+        format!("could not run Java (\"{java}\"). Install Java 21 from https://adoptium.net (then open the launcher again), or pass --java <path to java.exe>")
     })?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stderr), String::from_utf8_lossy(&out.stdout));
     parse_java_major(&text).with_context(|| {
@@ -157,7 +157,7 @@ pub fn build_command(dirs: &Dirs, opts: &LaunchOptions) -> Result<Command> {
         if have < need {
             bail!(
                 "Minecraft {base_id} needs Java {need} or newer, but \"{}\" is Java {have}. \
-                 Install Java {need} or pass --java <path to java.exe>",
+                 Install Java {need} from https://adoptium.net, or pass --java <path to java.exe>",
                 opts.java
             );
         }

@@ -11,6 +11,7 @@ fn default_root() -> PathBuf {
 }
 
 const USAGE: &str = "Wabbit launcher (core)\n\
+Double-click wabbit.exe (or run it with no arguments) to pick a name and play.\n\
   wabbit install <mc-version>            download vanilla (e.g. 1.21.11)\n\
   wabbit fabric  <mc-version>            install vanilla + Fabric, prints the version id\n\
   wabbit launch  <version-id> [--name Player] [--java java] [--mem 4096]\n\
@@ -68,9 +69,75 @@ fn resolve_java(java: String) -> Result<String> {
     }
 }
 
+/// Minecraft version the double-click mode installs and starts (the one the Wabbit mod targets).
+const DEFAULT_MC: &str = "1.21.11";
+
+fn prompt(text: &str) -> String {
+    use std::io::Write;
+    print!("{text}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    line.trim().to_string()
+}
+
+/// Remembers the last player name between double-click runs.
+fn settings_file(dirs: &Dirs) -> PathBuf {
+    dirs.root.join("wabbit-launcher.json")
+}
+
+fn last_name(dirs: &Dirs) -> Option<String> {
+    let text = std::fs::read_to_string(settings_file(dirs)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    v.get("name")?.as_str().map(str::to_string).filter(|n| valid_player_name(n))
+}
+
+/// What happens when the exe is double-clicked: ask for a name, get Minecraft + Fabric ready, start it.
+async fn double_click(dirs: &Dirs) -> Result<()> {
+    println!("Wabbit Launcher {}\n", env!("CARGO_PKG_VERSION"));
+    std::fs::create_dir_all(&dirs.root)?;
+
+    let remembered = last_name(dirs);
+    let name = loop {
+        let typed = match &remembered {
+            Some(n) => prompt(&format!("Player name [{n}]: ")),
+            None => prompt("Player name: "),
+        };
+        let name = if typed.is_empty() { remembered.clone().unwrap_or_default() } else { typed };
+        if valid_player_name(&name) {
+            break name;
+        }
+        println!("  Names are 3-16 letters, digits or underscores. Try again.");
+    };
+    let _ = std::fs::write(settings_file(dirs), serde_json::json!({ "name": name }).to_string());
+
+    println!("\nGetting Minecraft {DEFAULT_MC} with Fabric ready in {}", dirs.root.display());
+    println!("(the first time this downloads about 550 MB)\n");
+    let id = install_fabric(&new_client()?, dirs, DEFAULT_MC).await?;
+
+    println!("\nStarting Minecraft as {name}. Keep this window open while you play: closing it closes the game.\n");
+    let opts = LaunchOptions { version_id: id, player_name: name, java: "java".into(), max_mem_mb: 4096 };
+    let status = build_command(dirs, &opts)?.status().context("could not start Java")?;
+    if !status.success() {
+        bail!("Minecraft exited with {status}");
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Double-clicked (no arguments): guided mode. The window stays open at the end so any message can be read.
+    if args.is_empty() {
+        let dirs = Dirs { root: default_root() };
+        if let Err(e) = double_click(&dirs).await {
+            println!("\nSomething went wrong: {e:#}");
+        }
+        prompt("\nPress Enter to close this window...");
+        return Ok(());
+    }
+
     let cli = parse_args(&args)?;
     if cli.help || cli.positional.is_empty() {
         println!("{USAGE}");

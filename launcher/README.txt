@@ -2,6 +2,8 @@ Wabbit launcher - step 1 (core), Rust
 
 Build:   cargo build --release      Test: cargo test
          The program is target/release/wabbit(.exe).
+Easy:    double-click wabbit.exe, type a player name, and it installs and starts
+         Minecraft 1.21.11 with Fabric. Keep its window open while you play.
 Use:     wabbit fabric 1.21.11
          wabbit launch fabric-loader-<ver>-1.21.11 --name YourName
          Options (--name, --java, --mem, --dir) can go anywhere on the line.
@@ -13,8 +15,14 @@ Done:    version download (checksum verified), libraries (sha1 verified for Moja
          Downloads time out instead of hanging, and are retried 3 times.
 Not yet: Microsoft sign-in, auto Java download, mod profiles + auto-installing the Wabbit mod,
          Tauri UI, log-reading trackers.
-Status:  compiles cleanly and the unit tests pass on Windows. Not yet run end to end against the
-         real download servers. macOS ARM natives are untested.
+Status:  tested on Windows: unit tests pass, and a real install + launch of 1.21.11 with Fabric
+         reaches the game. macOS ARM natives are untested.
+
+Changes in 0.1.2
+ - Double-clicking the exe now works: it asks for a player name (and remembers it), gets
+   Minecraft 1.21.11 + Fabric ready and starts the game. Before, the window just flashed and closed
+ - Any error is shown and the window waits for Enter instead of closing
+ - The Java message links to https://adoptium.net
 
 Changes in 0.1.1
  - A relative --dir (e.g. --dir game) no longer breaks launching
