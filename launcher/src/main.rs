@@ -11,6 +11,7 @@ mod auth;
 mod config;
 mod install;
 mod launch;
+mod lunar;
 mod mods;
 mod net;
 mod render3d;
@@ -27,9 +28,9 @@ use std::time::{Duration, Instant};
 use theme::{CRIMSON, CRIMSON_DIM, CRIMSON_HOVER, LINE, PANEL, SILVER, SURFACE, TEXT};
 
 const WHATS_NEW: &[&str] = &[
-	"A real launcher window: sign in with Microsoft, install and play in one click",
-	"Java, Minecraft 1.21.11, Fabric and 17 performance mods install themselves",
-	"Quick join, multiple accounts, and eqsual on the left",
+	"Import from Lunar Client (Settings): keybinds, settings, servers, mods, resource packs, shaders",
+	"Imported mods are moved to their 1.21.11 version and checked before every Play",
+	"If an imported mod crashes the game, Wabbit switches it off for you",
 ];
 
 static START: OnceLock<Instant> = OnceLock::new();
@@ -50,6 +51,10 @@ enum Msg {
 	Launched,
 	LaunchFailed(String),
 	GameExited(Option<i32>),
+	ImportProgress(String, f32),
+	ImportDone(Result<lunar::Report, String>),
+	/// Imported mods were switched on/off in the background; re-read the list.
+	ImportedChanged,
 }
 
 /// What's already installed, for the Ready check card.
@@ -72,6 +77,16 @@ struct DeviceDialog {
 	code: String,
 	url: String,
 	cancel: Arc<AtomicBool>,
+}
+
+/// The "Import from Lunar Client" dialog.
+struct ImportDialog {
+	profiles: Vec<lunar::Profile>,
+	pick: usize,
+	choices: lunar::Choices,
+	running: bool,
+	progress: (String, f32),
+	report: Option<Result<lunar::Report, String>>,
 }
 
 struct ModRow {
@@ -111,6 +126,9 @@ struct App {
 	busy: bool,
 	game_running: bool,
 	signing_in: Option<DeviceDialog>,
+	importing: Option<ImportDialog>,
+	/// Mods brought over from Lunar Client (Mods tab).
+	imported: Vec<lunar::Imported>,
 	title_bar_done: bool,
 	render_ms: f32,
 
@@ -134,6 +152,7 @@ impl App {
 		let app = Self {
 			status: if settings.current().is_some() { "Ready to play.".into() } else { "Sign in to play.".into() },
 			installed: mods::installed(&settings.game_dir),
+			imported: lunar::imported(&settings.game_dir),
 			settings,
 			tx,
 			rx,
@@ -159,13 +178,16 @@ impl App {
 			busy: false,
 			game_running: false,
 			signing_in: None,
+			importing: None,
 			title_bar_done: false,
 			render_ms: 0.0,
 			shot: std::env::var_os("WABBIT_SHOT").map(|p| ShotState { path: p.into(), frames: 0, requested: false, first_frame_ms: None }),
 		};
 		let mut app = app;
 		// Test hook: WABBIT_DIALOG shows the sign-in dialog with a dummy code (no network).
-		if std::env::var_os("WABBIT_DIALOG").is_some() {
+		if std::env::var("WABBIT_DIALOG").as_deref() == Ok("import") {
+			app.open_import();
+		} else if std::env::var_os("WABBIT_DIALOG").is_some() {
 			app.signing_in = Some(DeviceDialog { code: "ABCD-1234".into(), url: auth::MS_VERIFICATION_URL.into(), cancel: Arc::new(AtomicBool::new(false)) });
 		}
 		// Background work at startup; the cached skin is already on screen.
@@ -310,6 +332,7 @@ impl App {
 					self.progress = None;
 					self.status = "Minecraft is starting…".into();
 					self.installed = mods::installed(&self.settings.game_dir);
+					self.imported = lunar::imported(&self.settings.game_dir);
 					self.refresh_ready(ctx);
 					if self.settings.close_on_launch {
 						ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -320,6 +343,23 @@ impl App {
 					self.progress = None;
 					self.status = e;
 					self.refresh_ready(ctx);
+				}
+				Msg::ImportedChanged => self.imported = lunar::imported(&self.settings.game_dir),
+				Msg::ImportProgress(s, p) => {
+					if let Some(d) = &mut self.importing {
+						d.progress = (s, p);
+					}
+				}
+				Msg::ImportDone(r) => {
+					self.imported = lunar::imported(&self.settings.game_dir);
+					self.status = match &r {
+						Ok(_) => "Imported from Lunar Client.".into(),
+						Err(e) => format!("Import failed: {e}"),
+					};
+					if let Some(d) = &mut self.importing {
+						d.running = false;
+						d.report = Some(r);
+					}
 				}
 				Msg::GameExited(code) => {
 					self.game_running = false;
@@ -381,20 +421,35 @@ impl App {
 			};
 			let progress = |s: &str, p: f32| send(Msg::Status(s.to_string(), Some(p)));
 			// 2. Game + Fabric + Java, 3. mods, 4. start.
-			let result = (|| -> anyhow::Result<std::process::Child> {
+			let result = (|| -> anyhow::Result<(std::process::Child, Vec<String>)> {
 				let plan = install::prepare(&settings.game_dir, &|s, p| progress(s, p * 0.85))?;
 				let warnings = mods::ensure(&settings.game_dir, &settings.disabled_mods, &|s, p| progress(s, 0.85 + p * 0.13))?;
 				if !warnings.is_empty() {
 					progress(&format!("Some mods skipped: {}", warnings.join("; ")), 0.98);
 				}
+				// Imported mods that would stop the game from starting get switched off.
+				let off = lunar::validate(&settings.game_dir);
 				progress("Launching Minecraft…", 1.0);
-				launch::start(&plan, &session, &settings.game_dir, settings.ram_mb, server.as_deref())
+				launch::start(&plan, &session, &settings.game_dir, settings.ram_mb, server.as_deref()).map(|c| (c, off))
 			})();
 			match result {
-				Ok(mut child) => {
+				Ok((mut child, off)) => {
 					send(Msg::Launched);
+					if !off.is_empty() {
+						let n = off.len();
+						let what = if n == 1 { "1 imported mod that can't run on 1.21.11 was".to_string() } else { format!("{n} imported mods that can't run on 1.21.11 were") };
+						send(Msg::Status(format!("Minecraft is starting… {what} switched off (see Mods tab)."), None));
+					}
 					let code = child.wait().ok().and_then(|s| s.code());
 					send(Msg::GameExited(code));
+					// A crash caused by an imported mod: switch it off and say so.
+					if code.is_some_and(|c| c != 0) {
+						let blamed = lunar::blame_crash(&settings.game_dir);
+						if !blamed.is_empty() {
+							send(Msg::ImportedChanged);
+							send(Msg::Status(format!("The game crashed because of {}. It's switched off now; press Play again.", blamed.join(", ")), None));
+						}
+					}
 				}
 				Err(e) => send(Msg::LaunchFailed(format!("Couldn't start: {e:#}"))),
 			}
@@ -600,6 +655,7 @@ impl eframe::App for App {
 			});
 
 		self.sign_in_dialog(ctx);
+		self.import_dialog(ctx);
 		self.shot_hook(ctx);
 	}
 }
@@ -788,6 +844,7 @@ impl App {
 		ui.add_space(4.0);
 		let disabled_now = mods::effective_disabled(&self.settings.disabled_mods);
 		let mut changed: Option<(String, bool)> = None;
+		let mut imported_changed: Option<(String, bool)> = None;
 		egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 			for (slug, fallback) in mods::MODS {
 				let row = self.mod_rows.get(*slug);
@@ -831,7 +888,51 @@ impl App {
 					});
 				});
 			}
+
+			// Mods brought over from Lunar Client.
+			if !self.imported.is_empty() {
+				ui.add_space(10.0);
+				card_title(ui, &format!("Imported from Lunar Client ({})", self.imported.len()));
+				ui.label(RichText::new("Wabbit switches off any that can't run before the game starts.").size(12.0).color(SILVER));
+				ui.add_space(4.0);
+				let dir = self.settings.game_dir.clone();
+				for m in &self.imported {
+					let mut on = lunar::is_enabled(&dir, m);
+					card(ui, |ui| {
+						ui.horizontal(|ui| {
+							let text_w = (ui.available_width() - 170.0).max(120.0);
+							ui.allocate_ui_with_layout(Vec2::new(text_w, 36.0), Layout::top_down(Align::Min), |ui| {
+								ui.set_width(text_w);
+								ui.add(egui::Label::new(RichText::new(&m.name).size(14.0).strong()).truncate());
+								let (line, color) = match &m.problem {
+									Some(p) => (format!("Switched off: {p}"), CRIMSON_HOVER),
+									None => (
+										match m.how.as_str() {
+											"updated" => format!("{} · updated for {}", m.version, install::MC_VERSION),
+											"added" => format!("{} · added (needed by your mods)", m.version),
+											_ => m.version.clone(),
+										},
+										SILVER,
+									),
+								};
+								ui.add(egui::Label::new(RichText::new(line).size(12.0).color(color)).truncate());
+							});
+							ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+								if toggle(ui, &mut on, true).changed() {
+									imported_changed = Some((m.file.clone(), on));
+								}
+								ui.label(RichText::new(if on { "On" } else { "Off" }).size(12.0).color(SILVER));
+							});
+						});
+					});
+				}
+			}
 		});
+		if let Some((file, on)) = imported_changed {
+			lunar::set_enabled(&self.settings.game_dir, &file, on);
+			self.imported = lunar::imported(&self.settings.game_dir);
+			self.clicked(ctx);
+		}
 		if let Some((slug, on)) = changed {
 			self.settings.disabled_mods.retain(|s| s != &slug);
 			if !on {
@@ -883,6 +984,20 @@ impl App {
 						self.clicked(ctx);
 					}
 				});
+			});
+			card(ui, |ui| {
+				card_title(ui, "Import from Lunar Client");
+				let found = lunar::root().is_some();
+				let text = if found {
+					"Copies your Lunar Client game settings, keybinds, server list, mods, resource packs and shaders into Wabbit. Lunar itself isn't changed."
+				} else {
+					"Lunar Client isn't installed on this PC (no .lunarclient folder found)."
+				};
+				ui.label(RichText::new(text).size(12.0).color(SILVER));
+				if ui.add_enabled(found && !self.busy && !self.game_running, egui::Button::new("Import from Lunar Client…")).clicked() {
+					self.open_import();
+					self.clicked(ctx);
+				}
 			});
 			card(ui, |ui| {
 				card_title(ui, "Launcher");
@@ -953,6 +1068,170 @@ impl App {
 		}
 	}
 
+	fn open_import(&mut self) {
+		self.importing = Some(ImportDialog {
+			profiles: lunar::profiles(),
+			pick: 0,
+			choices: lunar::Choices::default(),
+			running: false,
+			progress: (String::new(), 0.0),
+			report: None,
+		});
+	}
+
+	fn start_import(&mut self, ctx: &egui::Context) {
+		let Some(d) = &mut self.importing else { return };
+		let Some(profile) = d.profiles.get(d.pick).cloned() else { return };
+		d.running = true;
+		d.progress = ("Starting…".into(), 0.0);
+		let (choices, dir) = (d.choices, self.settings.game_dir.clone());
+		let (tx, ctx) = (self.tx.clone(), ctx.clone());
+		std::thread::spawn(move || {
+			let send = |m: Msg| {
+				let _ = tx.send(m);
+				ctx.request_repaint();
+			};
+			let r = lunar::import(&profile, choices, &dir, &|s, p| send(Msg::ImportProgress(s.to_string(), p)));
+			send(Msg::ImportDone(r.map_err(|e| format!("{e:#}"))));
+		});
+	}
+
+	fn import_dialog(&mut self, ctx: &egui::Context) {
+		let Some(d) = &mut self.importing else { return };
+		let (mut close, mut start) = (false, false);
+		let screen = ctx.screen_rect();
+		egui::Area::new(egui::Id::new("import-dim")).order(egui::Order::Middle).fixed_pos(screen.min).show(ctx, |ui| {
+			ui.painter().rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+			ui.allocate_rect(screen, Sense::click());
+		});
+		egui::Window::new("Import from Lunar Client")
+			.title_bar(false)
+			.collapsible(false)
+			.resizable(false)
+			.order(egui::Order::Foreground)
+			.anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+			.fixed_size(Vec2::new(480.0, 0.0))
+			.frame(egui::Frame::none().fill(PANEL).stroke(Stroke::new(1.0, LINE)).rounding(12.0).inner_margin(24.0))
+			.show(ctx, |ui| {
+				ui.label(theme::display("Import from Lunar Client", 24.0).color(TEXT));
+				if let Some(report) = &d.report {
+					match report {
+						Ok(r) => {
+							ui.label(RichText::new("Done. Brought over:").color(SILVER));
+							ui.add_space(6.0);
+							if r.lines.is_empty() {
+								ui.label("Nothing to import from this profile.");
+							}
+							for line in &r.lines {
+								ui.horizontal(|ui| {
+									let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 14.0), Sense::hover());
+									ui.painter().circle_filled(rect.center(), 2.5, CRIMSON);
+									ui.label(RichText::new(line).size(13.0));
+								});
+							}
+							if !r.skipped.is_empty() {
+								ui.add_space(6.0);
+								egui::CollapsingHeader::new(RichText::new(format!("Not imported ({})", r.skipped.len())).size(13.0).color(SILVER))
+									.id_salt("import-skipped")
+									.show(ui, |ui| {
+										egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+											for s in &r.skipped {
+												ui.label(RichText::new(s).size(12.0).color(SILVER));
+											}
+										});
+									});
+							}
+							ui.add_space(6.0);
+							ui.label(RichText::new("Imported mods are listed at the bottom of the Mods tab.").size(12.0).color(SILVER));
+						}
+						Err(e) => {
+							ui.label(RichText::new(format!("Import failed: {e}")).color(CRIMSON_HOVER));
+						}
+					}
+					ui.add_space(10.0);
+					if ui.add(egui::Button::new(RichText::new("Done").color(Color32::WHITE)).fill(CRIMSON).min_size(Vec2::new(90.0, 30.0))).clicked() {
+						close = true;
+					}
+					return;
+				}
+				if d.running {
+					ui.add_space(8.0);
+					ui.label(RichText::new(&d.progress.0).color(SILVER));
+					ui.add_space(6.0);
+					let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 10.0), Sense::hover());
+					let p = ctx.animate_value_with_time(egui::Id::new("import-progress"), d.progress.1, 0.25).clamp(0.0, 1.0);
+					ui.painter().rect_filled(rect, 5.0, SURFACE);
+					ui.painter().rect_filled(Rect::from_min_max(rect.min, Pos2::new(rect.left() + rect.width() * p, rect.bottom())), 5.0, CRIMSON);
+					return;
+				}
+				ui.label(RichText::new("Copies your setup into Wabbit. Lunar Client itself isn't changed.").color(SILVER));
+				ui.add_space(10.0);
+				if d.profiles.is_empty() {
+					ui.label("No Lunar Client profiles with settings or mods were found.");
+				} else {
+					card_title(ui, "Lunar profile");
+					egui::ComboBox::from_id_salt("lunar-profile")
+						.width(ui.available_width())
+						.selected_text(d.profiles[d.pick].label())
+						.show_ui(ui, |ui| {
+							for (i, p) in d.profiles.iter().enumerate() {
+								ui.selectable_value(&mut d.pick, i, p.label());
+							}
+						});
+					let p = &d.profiles[d.pick];
+					ui.label(RichText::new(p.summary()).size(12.0).color(SILVER));
+					ui.add_space(8.0);
+					let c = &mut d.choices;
+					let rows: [(&mut bool, bool, String, &str); 5] = [
+						(&mut c.settings, p.options, "Game settings and keybinds".into(), "Replaces Wabbit's game settings. The old ones are backed up."),
+						(&mut c.servers, p.servers, "Server list".into(), ""),
+						(&mut c.mods, !p.mod_jars.is_empty(), format!("Mods ({})", p.mod_jars.len()), "Mods for other versions are swapped for their 1.21.11 build when there is one."),
+						(&mut c.packs, !p.packs.is_empty(), format!("Resource packs ({})", p.packs.len()), ""),
+						(&mut c.shaders, !p.shaders.is_empty(), format!("Shader packs ({})", p.shaders.len()), "Iris is added so they work."),
+					];
+					for (on, available, title, sub) in rows {
+						ui.horizontal(|ui| {
+							let mut v = *on && available;
+							if toggle(ui, &mut v, available).changed() {
+								*on = v;
+							}
+							ui.vertical(|ui| {
+								ui.label(RichText::new(title).size(14.0).color(if available { TEXT } else { SILVER }));
+								if !sub.is_empty() && available {
+									ui.label(RichText::new(sub).size(11.5).color(SILVER));
+								}
+							});
+						});
+						ui.add_space(2.0);
+					}
+					ui.add_space(6.0);
+					ui.label(
+						RichText::new("Lunar's own built-in features (keystrokes, FPS display, cosmetics and their settings) are part of Lunar and can't be moved.")
+							.size(11.5)
+							.color(SILVER),
+					);
+				}
+				ui.add_space(12.0);
+				ui.horizontal(|ui| {
+					let can = !d.profiles.is_empty();
+					let btn = egui::Button::new(RichText::new("Import").color(Color32::WHITE)).fill(if can { CRIMSON } else { CRIMSON_DIM }).min_size(Vec2::new(90.0, 30.0));
+					if ui.add_enabled(can, btn).clicked() {
+						start = true;
+					}
+					if ui.add(egui::Button::new("Cancel").min_size(Vec2::new(80.0, 30.0))).clicked() {
+						close = true;
+					}
+				});
+			});
+		if close {
+			self.importing = None;
+			self.clicked(ctx);
+		} else if start {
+			self.start_import(ctx);
+			self.clicked(ctx);
+		}
+	}
+
 	/// WABBIT_SHOT: let the window settle, screenshot, write a report, close.
 	fn shot_hook(&mut self, ctx: &egui::Context) {
 		let Some(shot) = &mut self.shot else { return };
@@ -1005,8 +1284,78 @@ fn selftest(dir: std::path::PathBuf) -> anyhow::Result<()> {
 	Ok(())
 }
 
+/// WABBIT_IMPORT=<game dir> (optionally WABBIT_IMPORT_PROFILE=<lunar profile folder>):
+/// import from Lunar into that folder, install Wabbit's mods, then run the
+/// pre-Play check — the same steps as the dialog plus Play, without a window.
+fn import_test(dir: std::path::PathBuf) -> anyhow::Result<()> {
+	let log = |s: &str, p: f32| eprintln!("[{:>3.0}%] {s}", p * 100.0);
+	let profiles = lunar::profiles();
+	for p in &profiles {
+		eprintln!("profile {:<24} {}", p.label(), p.summary());
+	}
+	let want = std::env::var("WABBIT_IMPORT_PROFILE").ok();
+	let p = match &want {
+		Some(w) => profiles.iter().find(|p| &p.name == w),
+		None => profiles.first(),
+	}
+	.ok_or_else(|| anyhow::anyhow!("no Lunar profile"))?;
+	eprintln!("importing {}", p.name);
+	let t = Instant::now();
+	let r = lunar::import(p, lunar::Choices::default(), &dir, &log)?;
+	eprintln!("import done in {:.1}s", t.elapsed().as_secs_f32());
+	for l in &r.lines {
+		eprintln!("  + {l}");
+	}
+	for s in &r.skipped {
+		eprintln!("  - {s}");
+	}
+	mods::ensure(&dir, &[], &log)?;
+	for s in lunar::validate(&dir) {
+		eprintln!("  off: {s}");
+	}
+	let list = lunar::imported(&dir);
+	eprintln!("imported mods enabled: {}/{}", list.iter().filter(|m| lunar::is_enabled(&dir, m)).count(), list.len());
+	if std::env::var_os("WABBIT_IMPORT_LAUNCH").is_some() {
+		let plan = install::prepare(&dir, &log)?;
+		let session = auth::Session { name: "WabbitTest".into(), uuid: "00000000000000000000000000000000".into(), access_token: "0".into(), xuid: "0".into() };
+		// Start, and on a crash blame an imported mod and retry (as Play would),
+		// up to 4 tries. Stops the game once it reaches the title screen.
+		for attempt in 1..=4 {
+			let _ = std::fs::remove_file(dir.join("logs").join("latest.log"));
+			let mut child = launch::start(&plan, &session, &dir, 3072, None)?;
+			eprintln!("try {attempt}: game started, pid {}", child.id());
+			let t = Instant::now();
+			let code = loop {
+				if let Some(s) = child.try_wait()? {
+					break s.code();
+				}
+				let log = std::fs::read_to_string(dir.join("logs").join("latest.log")).unwrap_or_default();
+				if log.contains("Sound engine started") || t.elapsed() > Duration::from_secs(240) {
+					eprintln!("reached title screen in {:.0}s: {}", t.elapsed().as_secs_f32(), log.contains("Sound engine started"));
+					let _ = child.kill();
+					return Ok(());
+				}
+				std::thread::sleep(Duration::from_millis(500));
+			};
+			let blamed = lunar::blame_crash(&dir);
+			eprintln!("game exited {code:?}; switched off: {blamed:?}");
+			if blamed.is_empty() {
+				anyhow::bail!("crashed and no imported mod to blame");
+			}
+		}
+	}
+	Ok(())
+}
+
 fn main() -> eframe::Result<()> {
 	START.get_or_init(Instant::now);
+	if let Some(dir) = std::env::var_os("WABBIT_IMPORT") {
+		if let Err(e) = import_test(dir.into()) {
+			eprintln!("IMPORT FAILED: {e:#}");
+			std::process::exit(1);
+		}
+		return Ok(());
+	}
 	if let Some(dir) = std::env::var_os("WABBIT_SELFTEST") {
 		if let Err(e) = selftest(dir.into()) {
 			eprintln!("SELFTEST FAILED: {e:#}");
