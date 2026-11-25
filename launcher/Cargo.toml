@@ -1,7 +1,12 @@
 [package]
 name = "wabbit-launcher"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+autobins = false
+
+[[bin]]
+name = "wabbit"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
@@ -11,7 +16,7 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "time"] }
 
 [profile.release]
 lto = true

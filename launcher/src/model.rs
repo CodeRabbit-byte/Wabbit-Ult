@@ -10,6 +10,8 @@ pub struct Manifest {
 pub struct ManifestEntry {
     pub id: String,
     pub url: String,
+    /// SHA-1 of the version JSON (present in version_manifest_v2).
+    pub sha1: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -25,6 +27,13 @@ pub struct VersionJson {
     pub downloads: Option<VersionDownloads>,
     pub asset_index: Option<AssetIndexRef>,
     pub assets: Option<String>,
+    pub java_version: Option<JavaVersion>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JavaVersion {
+    pub major_version: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -69,6 +78,9 @@ pub struct Library {
     pub rules: Option<Vec<Rule>>,
     /// Maven base URL (Fabric-style libraries have this instead of `downloads`).
     pub url: Option<String>,
+    /// Fabric-style libraries carry their checksum and size at the top level.
+    pub sha1: Option<String>,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,6 +93,7 @@ pub struct FileDownload {
     pub path: Option<String>,
     pub url: String,
     pub sha1: Option<String>,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -103,6 +116,7 @@ pub struct AssetIndex {
 #[derive(Debug, Deserialize)]
 pub struct AssetObject {
     pub hash: String,
+    pub size: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
